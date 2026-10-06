@@ -24,6 +24,29 @@ jobs:
       contents: read
 
     steps:
+      # O build do Android é pesado em disco (NDK, SDK, Python e SDL compilados).
+      # Aqui: 1) apagamos ferramentas pré-instaladas que não usamos e
+      #       2) movemos os diretórios grandes para o disco secundário (/mnt).
+      - name: Preparar disco
+        run: |
+          echo "===== antes ====="; df -h / /mnt || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/boost /usr/share/swift /usr/local/share/powershell \
+            /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          sudo apt-get clean || true
+          if [ -d /mnt ]; then
+            sudo mkdir -p /mnt/buildozer-global /mnt/gradle /mnt/logs
+            sudo chown -R "$(id -u):$(id -g)" /mnt/buildozer-global /mnt/gradle /mnt/logs
+            # SDK + NDK + downloads do buildozer
+            ln -sfn /mnt/buildozer-global "$HOME/.buildozer"
+            echo "GRADLE_USER_HOME=/mnt/gradle" >> "$GITHUB_ENV"
+            echo "BUILD_LOG=/mnt/logs/build.log" >> "$GITHUB_ENV"
+          else
+            echo "BUILD_LOG=$RUNNER_TEMP/build.log" >> "$GITHUB_ENV"
+          fi
+          echo "===== depois ====="; df -h / /mnt || true
+
       - name: Baixar o código
         uses: actions/checkout@v6
 
@@ -50,22 +73,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "buildozer==1.6.0"
 
-      # SDK/NDK do Android (vários GB) ficam em cache entre as execuções.
-      - name: Cache do SDK/NDK
-        uses: actions/cache@v4
-        with:
-          path: ~/.buildozer
-          key: buildozer-global-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
-          restore-keys: |
-            buildozer-global-${{ runner.os }}-
-
-      # O runner já vem com ~15 GB ocupados por ferramentas que não usamos
-      # (o buildozer baixa o próprio SDK/NDK). Liberar evita falta de disco.
-      - name: Liberar espaço em disco
-        run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
-          df -h /
-
       - name: Compilar o APK
         shell: bash
         env:
@@ -75,21 +82,25 @@ jobs:
           python --version
           pip show buildozer | head -n 2
           free -m
-          buildozer -v android debug 2>&1 | tee build.log
+          # Mostra o uso de disco a cada 3 minutos (ajuda a achar o que enche o disco)
+          ( while sleep 180; do echo "[disco] $(date +%T)"; df -h / /mnt | head -n 3; done ) &
+          MONITOR=$!
+          trap 'pkill -P $MONITOR 2>/dev/null || true; kill $MONITOR 2>/dev/null || true' EXIT
+          buildozer -v android debug 2>&1 | tee "$BUILD_LOG"
 
       - name: Mostrar o final do log (só se falhou)
         if: failure()
         run: |
-          echo "===== últimas linhas do build.log ====="
-          tail -n 150 build.log || echo "build.log não foi criado"
-          df -h /
+          echo "===== últimas linhas do log ====="
+          tail -n 150 "$BUILD_LOG" || echo "o log não foi criado"
+          echo "===== disco ====="; df -h / /mnt || true
 
       - name: Enviar o log completo
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: build-log
-          path: build.log
+          path: ${{ env.BUILD_LOG }}
           if-no-files-found: ignore
           retention-days: 7
 
