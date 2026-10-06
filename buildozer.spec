@@ -33,8 +33,12 @@ android.ndk_api = 21
 android.api = 33
 android.ndk = 28c
 
-# 32 bits (aparelhos antigos, como os do Android 5.x) e 64 bits (aparelhos novos).
-android.archs = arm64-v8a, armeabi-v7a
+# Arquitetura(s) do APK. armeabi-v7a (ARM 32 bits) roda no Android 5.x e tambem
+# em aparelhos de 64 bits que aceitam apps de 32 bits; compilar uma so reduz
+# bastante o tempo e o espaco em disco do build.
+# Para celulares novos (que so aceitam 64 bits), use:
+#   android.archs = arm64-v8a, armeabi-v7a
+android.archs = armeabi-v7a
 
 # Necessario para o build rodar sem perguntar nada (CI).
 android.accept_sdk_license = True
