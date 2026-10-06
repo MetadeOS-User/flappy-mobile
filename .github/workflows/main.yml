@@ -59,8 +59,39 @@ jobs:
           restore-keys: |
             buildozer-global-${{ runner.os }}-
 
+      # O runner já vem com ~15 GB ocupados por ferramentas que não usamos
+      # (o buildozer baixa o próprio SDK/NDK). Liberar evita falta de disco.
+      - name: Liberar espaço em disco
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
+          df -h /
+
       - name: Compilar o APK
-        run: buildozer -v android debug
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: "1"  # mostra o log em tempo real, sem segurar em buffer
+        run: |
+          java -version
+          python --version
+          pip show buildozer | head -n 2
+          free -m
+          buildozer -v android debug 2>&1 | tee build.log
+
+      - name: Mostrar o final do log (só se falhou)
+        if: failure()
+        run: |
+          echo "===== últimas linhas do build.log ====="
+          tail -n 150 build.log || echo "build.log não foi criado"
+          df -h /
+
+      - name: Enviar o log completo
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Enviar o APK como artefato
         uses: actions/upload-artifact@v7
